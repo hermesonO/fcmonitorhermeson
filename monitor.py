@@ -1,24 +1,18 @@
-name: Rodar script
+import pandas as pd
+import time
 
-on:
-  workflow_dispatch: # permite rodar manualmente
-  schedule:
-    - cron: "0 * * * *" # roda a cada 1 hora
+def rodar_monitor():
+    print("✅ Monitor iniciado...")
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+    try:
+        # Lê o arquivo de preços
+        precos = pd.read_csv("precos.csv")
+        print("📊 Preços carregados com sucesso:")
+        print(precos.head())  # Mostra só as 5 primeiras linhas
+    except Exception as e:
+        print("⚠️ Erro ao ler precos.csv:", e)
 
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Configurar Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: Instalar dependências
-      run: pip install -r requirements.txt
-
-    - name: Rodar script
-      run: python monitor.py
+if __name__ == "__main__":
+    rodar_monitor()
+    time.sleep(2)  # espera 2 segundos só pra simular execução
+    print("🏁 Monitor finalizado")
