@@ -7,9 +7,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from pytz import timezone
 
-# 🚨 BIBLIOTECAS PARA SCRAPING 🚨
+# 🚨 BIBLIOTECAS PARA ACESSO À WEB (API-BASED) 🚨
 import requests
-from bs4 import BeautifulSoup
+# BeautifulSoup não é mais necessário para a API, mas mantemos por segurança.
+from bs4 import BeautifulSoup 
 # ------------------------------------
 
 # ===================================================
@@ -19,7 +20,7 @@ from bs4 import BeautifulSoup
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TIMEZONE = timezone('UTC') 
 
-# Lista de User-Agents para evitar bloqueio por repetição
+# Lista de User-Agents (ainda útil, mas menos crítica para APIs)
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
@@ -27,94 +28,91 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
 ]
 
+# URL da API de busca do Futbin (para encontrar o ID do jogador)
+FUTBIN_SEARCH_API = "https://www.futbin.com/search_players"
+# URL da API de preço do Futbin (o ID será inserido aqui)
+FUTBIN_PRICE_API = "https://www.futbin.com/mobile/player_prices?player_id=" 
 
 # ===================================================
-# 2. FUNÇÕES DE DADOS E SCRAPING MULTI-SITE
+# 2. FUNÇÕES DE DADOS E ACESSO À API DO FUTBIN
 # ===================================================
 
-def clean_price_text(price_text):
-    """Limpa o texto do preço, removendo K/M e formatação de milhar."""
+def get_player_id(player_name):
+    """Usa a API de busca do Futbin para encontrar o ID do jogador."""
     
-    # Remove qualquer caracter que não seja número, K, M, ponto ou vírgula
-    price_text = price_text.lower().replace('.', '').replace(',', '').strip()
-
-    if 'm' in price_text:
-        # Preços em Milhões (ex: 1.5M -> 1500000)
-        num = float(price_text.replace('m', '')) * 1000000
-    elif 'k' in price_text:
-        # Preços em Milhares (ex: 500K -> 500000)
-        num = float(price_text.replace('k', '')) * 1000
-    else:
-        # Preços sem notação (assume que já é o número total)
-        num = float(price_text)
-
-    # Arredonda e retorna como inteiro (ex: 1500000)
-    return int(num) if num is not None else None
-
-
-def scrape_futbin(player_name):
-    """
-    Tenta extrair o preço do Futbin usando o recurso de busca e redirecionamento.
-    """
-    
-    # 1. Tenta acessar a URL de busca
-    search_term = player_name.lower().replace(" ", "+")
-    url = f"https://www.futbin.com/search?query={search_term}"
-    
-    # Escolhe um User-Agent aleatório para cada busca
     headers = {'User-Agent': random.choice(USER_AGENTS)}
     
     try:
-        # Permite redirecionamento (o Futbin redireciona a busca para a página do jogador)
-        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        response.raise_for_status() # Verifica erros HTTP
-
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # A API de busca exige o termo de pesquisa no parâmetro 'term'
+        response = requests.get(FUTBIN_SEARCH_API, headers=headers, params={'term': player_name}, timeout=10)
+        response.raise_for_status()
         
-        # ⚠️ Ponto Crítico do FUTBIN:
-        # O preço PS4/5 geralmente está em 'span' com classes específicas
-        # Tentativa 1: Preço principal no topo da página
-        price_element = soup.find('span', class_='ps4_price') 
+        # O retorno é um JSON com uma lista de jogadores correspondentes
+        results = response.json()
         
-        if not price_element:
-            # Tentativa 2: Preço principal dentro de uma div
-            price_element = soup.find('div', class_='ps4_price_val') 
-        
-        if price_element:
-            price_text = price_element.get_text(strip=True)
-            final_price = clean_price_text(price_text)
+        if results and len(results) > 0:
+            # Pega o ID do primeiro e melhor resultado
+            return results[0].get('id')
             
-            if final_price is not None:
-                return final_price, "FUTBIN (Real)"
-            else:
-                print(f"Futbin Erro: Formato de preço inválido: {price_text}")
-                return None, "FUTBIN (Formato Inválido)"
+        return None
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Erro na API de busca do Futbin para {player_name}: {e}")
+        return None
 
-        # Se não encontrou o elemento, pode ser uma página de múltiplos resultados
-        print("Futbin Erro: Elemento de preço não encontrado. Talvez seja página de busca.")
-        return None, "FUTBIN (Elemento Não Encontrado)"
+def get_price_from_api(player_id):
+    """Usa a API de preço do Futbin com o ID para obter o preço em JSON."""
+    
+    headers = {'User-Agent': random.choice(USER_AGENTS)}
+    url = FUTBIN_PRICE_API + str(player_id)
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # O retorno é um JSON com os preços por plataforma (PS, XBOX, PC)
+        prices_data = response.json()
+        
+        # O Futbin retorna um dicionário com o ID do jogador como chave principal
+        player_data = prices_data.get(str(player_id))
+        
+        if player_data:
+            # Pegamos o preço da plataforma PS (PlayStation) como padrão
+            price_info = player_data.get('prices', {}).get('ps')
+            
+            if price_info and 'LCPrice' in price_info:
+                # O preço está formatado como string, ex: '1,500,000'
+                price_text = price_info['LCPrice'].replace(',', '') # Remove vírgulas
+                return int(price_text), "FUTBIN (API - PS)"
+                
+        return None, "FUTBIN (API - Preço não encontrado)"
 
     except requests.exceptions.RequestException as e:
-        print(f"Futbin Erro de Conexão: {e}")
-        return None, "FUTBIN (Erro de Conexão)"
+        print(f"Erro na API de preço do Futbin para ID {player_id}: {e}")
+        return None, "FUTBIN (API - Erro de Conexão)"
 
 
 def fetch_price_from_web(player_name):
     """
-    Coordena a tentativa de scraping principal no Futbin.
+    Coordena a busca do preço usando a API do Futbin.
     """
     
-    # Tenta o scraping
-    price, source = scrape_futbin(player_name)
+    # 1. Busca o ID do jogador
+    player_id = get_player_id(player_name)
     
-    if price is not None:
-        return price, source
+    if player_id:
+        # 2. Se o ID foi encontrado, busca o preço
+        price, source = get_price_from_api(player_id)
         
+        if price is not None:
+            return price, source
+
     # FALLBACK FINAL (Simulação Aleatória)
     time.sleep(1) 
     preco_num_simulado = random.randint(1000000, 2000000)
     
-    return preco_num_simulado, "ERRO: Busca Real Falhou (Simulado)"
+    # A fonte indicará que o processo de busca do ID falhou
+    return preco_num_simulado, "ERRO: Falha na API do Futbin (Simulado)"
 
 
 def registrar_historico(jogador, preco_moedas, preco_formatado):
@@ -145,6 +143,7 @@ def registrar_historico(jogador, preco_moedas, preco_formatado):
 
 def get_top_5_players():
     """SIMULA a busca pelos 5 jogadores mais buscados."""
+    # Para ser 100% real, esta função também teria que usar a API do Futbin
     return [
         {"nome": "Kylian Mbappé", "id": "mbappe_id"},
         {"nome": "V. van Dijk", "id": "vvd_id"},
@@ -156,7 +155,7 @@ def get_top_5_players():
 
 def get_player_price(search_term):
     """
-    Função principal que chama o scraping real.
+    Função principal que chama a API do Futbin.
     """
     
     if "_id" in search_term:
@@ -164,7 +163,7 @@ def get_player_price(search_term):
     else: 
         player_name = search_term.title()
     
-    # 🚨 CHAMADA DO SCRAPING REAL 🚨
+    # 🚨 CHAMADA DA API REAL 🚨
     preco_num, source_site = fetch_price_from_web(player_name)
     
     current_time_str = datetime.now(TIMEZONE).strftime('%H:%M:%S')
@@ -313,11 +312,10 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    # Garante que as bibliotecas necessárias para o scraping estejam instaladas
+    # Garante que as bibliotecas necessárias para o acesso à API estejam instaladas
     try:
         __import__('pytz')
         __import__('requests')
-        __import__('bs4')
     except ImportError as e:
         print(f"ERRO DE DEPENDÊNCIA: {e}. Por favor, instale: pip install -r requirements.txt --user")
     
