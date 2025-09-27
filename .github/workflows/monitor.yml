@@ -1,26 +1,4 @@
-name: Rodar monitor
-
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
-
-jobs:
-  run-monitor:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Baixar repositório
-        uses: actions/checkout@v3
-
-      - name: Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Instalar dependências
-        run: |
-          pip install pandas
-
-      - name: Rodar script
-        run: python monitor.py
+- name: Instalar dependências
+        run: | # O 'run: |' permite rodar múltiplas linhas
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
