@@ -1,17 +1,9 @@
-import time
 import csv
 import os
-import random
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from pytz import timezone
-import re # Nova importação para expressões regulares
-
-# 🚨 BIBLIOTECAS PARA SCRAPING 🚨
-import requests
-from bs4 import BeautifulSoup
-# ------------------------------------
 
 # ===================================================
 # 1. CONFIGURAÇÃO
@@ -20,115 +12,21 @@ from bs4 import BeautifulSoup
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TIMEZONE = timezone('UTC') 
 
-# FUTBIN_API_KEY não é mais necessário para este método, mas a lógica de headers permanece.
-FUTBIN_API_KEY = os.environ.get("FUTBIN_API_KEY", "FUT_WEB") # Valor default de segurança
-
-# Lista de User-Agents para rotação
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/123.0.0.0',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-]
-
-# URL Base para TENTATIVA DE SCRAPING NO FUTBIN (voltando à busca por URL de redirecionamento)
-FUTBIN_SEARCH_URL = "https://www.futbin.com/search?query=" 
+# Tipos de plataformas disponíveis para o botão
+PLATFORMS = {
+    'PS': 'PlayStation', 
+    'XB': 'Xbox', 
+    'PC': 'PC'
+}
 
 # ===================================================
-# 2. FUNÇÕES DE DADOS E SCRAPING HTML
+# 2. FUNÇÕES DE DADOS E HISTÓRICO
 # ===================================================
 
-def clean_price_text(price_text):
-    """Limpa o texto do preço, removendo formatação de milhar/milhão."""
+def registrar_historico(jogador, preco_moedas, plataforma):
+    """Adiciona o registro de preço manual ao arquivo CSV."""
     
-    # Remove qualquer caracter que não seja número (0-9)
-    price_text = re.sub(r'[^\d]', '', price_text)
-    
-    return int(price_text) if price_text.isdigit() else None
-
-
-def get_headers():
-    """Gera o cabeçalho de requisição com User-Agent rotativo."""
-    
-    headers = {
-        'User-Agent': random.choice(USER_AGENTS),
-        # Mantemos o X-Requested-With e Referer para simular melhor o navegador
-        'X-Requested-With': FUTBIN_API_KEY, 
-        'Referer': 'https://www.futbin.com/'
-    }
-    return headers
-
-
-def scrape_futbin_html(player_name):
-    """
-    Tenta extrair o preço do Futbin forçando o redirecionamento.
-    """
-    
-    search_term = player_name.lower().replace(" ", "+")
-    url = f"{FUTBIN_SEARCH_URL}{search_term}"
-    
-    try:
-        # Acessa a URL de busca e segue o redirecionamento para a página do jogador
-        response = requests.get(url, headers=get_headers(), timeout=10, allow_redirects=True)
-        response.raise_for_status() 
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # ⚠️ TENTATIVA DE ENCONTRAR OS PREÇOS PS e XBOX NA PÁGINA REDIRECIONADA
-        
-        # O preço PS4/5 geralmente está em 'span' ou 'div' com classes específicas
-        # Tentativa 1: Classe principal do preço PS
-        ps_element = soup.find('span', class_='ps4_price')
-        if not ps_element:
-            ps_element = soup.find('div', class_='ps4_price_val')
-        
-        # Tentativa 2: Classe principal do preço Xbox
-        xbox_element = soup.find('span', class_='xbox_price')
-        if not xbox_element:
-            xbox_element = soup.find('div', class_='xbox_price_val')
-            
-        ps_price = clean_price_text(ps_element.get_text(strip=True)) if ps_element else None
-        xbox_price = clean_price_text(xbox_element.get_text(strip=True)) if xbox_element else None
-        
-        if ps_price or xbox_price:
-            return {
-                "ps_price": ps_price,
-                "xbox_price": xbox_price,
-                "source": "FUTBIN (HTML Scraping)"
-            }
-        
-        print("Futbin Erro: Elementos de preço PS/XBOX não encontrados.")
-        return None
-
-    except requests.exceptions.RequestException as e:
-        print(f"Futbin Erro de Conexão/Bloqueio: {e}")
-        return None
-
-
-def fetch_price_from_web(player_name):
-    """
-    Tenta o scraping principal no Futbin.
-    """
-    
-    # Tenta o scraping
-    result = scrape_futbin_html(player_name)
-    
-    if result:
-        return result
-        
-    # FALLBACK FINAL (Simulação Aleatória)
-    time.sleep(1) 
-    
-    return {
-        "ps_price": random.randint(1000000, 2000000), 
-        "xbox_price": random.randint(1000000, 2000000), 
-        "source": "ERRO: Todos os métodos falharam (Simulado)"
-    }
-
-
-def registrar_historico(jogador, preco_moedas, preco_formatado):
-    """Adiciona a busca do jogador ao arquivo CSV."""
-    
+    # 1. Cria o arquivo se não existir (com novo cabeçalho)
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as f:
             f.readline()
@@ -136,97 +34,104 @@ def registrar_historico(jogador, preco_moedas, preco_formatado):
         try:
             with open('preços_historico.csv', 'w', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
-                writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'preco_formatado'])
+                writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'plataforma'])
         except Exception as e:
             print(f"Erro ao criar preços_historico.csv: {e}")
             return
         
+    # 2. Adiciona a nova linha
     with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         
+        # Formata a data e hora atual
         now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
         
-        writer.writerow([now, jogador, preco_moedas, preco_formatado])
+        # Formata o preço para garantir que seja um número (sem separador de milhar)
+        # Tenta limpar o preço de formatação (ex: 1.000.000 -> 1000000)
+        try:
+            preco_limpo = int(str(preco_moedas).replace('.', '').replace(',', ''))
+        except ValueError:
+            print(f"Erro ao limpar preço: {preco_moedas}")
+            preco_limpo = 0
+            
+        writer.writerow([now, jogador, preco_limpo, plataforma])
         
-    print(f"Histórico registrado: {jogador} | {preco_formatado}")
+    print(f"Histórico registrado: {jogador} ({plataforma}) | {preco_limpo}")
 
 
-def get_top_5_players():
-    """SIMULA a busca pelos 5 jogadores mais buscados."""
-    return [
-        {"nome": "Kylian Mbappé", "id": "mbappe_id"},
-        {"nome": "V. van Dijk", "id": "vvd_id"},
-        {"nome": "E. Haaland", "id": "haaland_id"},
-        {"nome": "L. Messi", "id": "messi_id"},
-        {"nome": "Vini Jr.", "id": "vinijr_id"}
-    ]
-
-
-def get_player_price(search_term):
-    """
-    Função principal que prepara a mensagem final.
-    """
-    
-    if "_id" in search_term:
-        player_name = search_term.replace("_id", "").title()
-    else: 
-        player_name = search_term.title()
-    
-    # 🚨 CHAMADA DO SCRAPING REAL 🚨
-    price_data = fetch_price_from_web(player_name)
-    
-    current_time_str = datetime.now(TIMEZONE).strftime('%H:%M:%S')
-    
-    # --- PREPARAÇÃO DA MENSAGEM FINAL ---
-    
-    # Usamos o preço do PS para o histórico e a dica de trade
-    preco_num_ps = price_data.get("ps_price", 0) 
-    
-    # Formatação dos preços para exibição
-    
-    def format_price(price):
-        if price:
-            # Formatação de milhares (1.000.000)
-            return f"{price:,}".replace(",", "X").replace(".", ",").replace("X", ".") + " moedas"
-        return "N/D"
-
-    preco_ps_texto = format_price(price_data.get("ps_price"))
-    preco_xbox_texto = format_price(price_data.get("xbox_price"))
-    
-    price_message = (
-        f"O preço de **{player_name}** é:\n"
-        f"🔹 **PlayStation:** {preco_ps_texto}\n"
-        f"🟢 **Xbox:** {preco_xbox_texto}"
-    )
-
-    registrar_historico(player_name, preco_num_ps, preco_ps_texto)
-
-    return {
-        "player_name": player_name,
-        "preco_num": preco_num_ps, # Mantém apenas o PS para a dica de trade
-        "price_message": price_message,
-        "time_now": current_time_str,
-        "source_site": price_data.get("source")
-    }
-
-
-def get_trade_tip(jogador_nome, preco_atual_moedas):
-    """Lê o histórico e fornece uma dica simples de trade."""
-    
+def get_last_registered_price(player_name):
+    """Busca o último preço registrado manualmente para um jogador."""
     historico = []
+    player_name_upper = player_name.upper()
     
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
             for row in reader:
-                if row['jogador'].upper() == jogador_nome.upper():
+                # Busca pelo nome (case-insensitive)
+                if row['jogador'].upper() == player_name_upper:
+                    historico.append(row)
+    except FileNotFoundError:
+        return None, "O histórico de preços está vazio."
+    
+    if historico:
+        # Retorna o último registro
+        last_entry = historico[-1]
+        
+        try:
+            # Converte a string de data_hora para um objeto datetime para formatação
+            dt_obj = datetime.strptime(last_entry['data_hora'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=TIMEZONE)
+            
+            # Converte o preço para número, se possível
+            preco_moedas = int(last_entry.get('preco_moedas', 0))
+
+        except ValueError:
+             return None, f"Erro de formato nos dados para {player_name}."
+
+
+        # Formatação do preço (1.000.000)
+        def format_price(price):
+            return f"{price:,}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        
+        price_message = (
+            f"O último preço de **{player_name}** foi:\n"
+            f"💰 **Preço:** {format_price(preco_moedas)} moedas\n"
+            f"🎮 **Plataforma:** {last_entry['plataforma']}\n"
+            f"📅 **Data:** {dt_obj.strftime('%d/%m/%Y')} às {dt_obj.strftime('%H:%M:%S')} (UTC)"
+        )
+
+        return {
+            "player_name": player_name,
+            "preco_num": preco_moedas,
+            "price_message": price_message,
+            "last_update": dt_obj.strftime('%Y-%m-%d %H:%M:%S'),
+            "plataforma": last_entry['plataforma']
+        }, None
+        
+    return None, f"Nenhum preço registrado para **{player_name}**."
+
+
+def get_trade_tip(jogador_nome, preco_atual_moedas):
+    """Lê o histórico e fornece uma dica simples de trade, usando o preço registrado."""
+    
+    historico = []
+    player_name_upper = jogador_nome.upper()
+    
+    try:
+        with open('preços_historico.csv', 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row['jogador'].upper() == player_name_upper:
                     historico.append(row)
     except FileNotFoundError:
         return "Primeiro registro. Busque novamente mais tarde para comparar os preços!"
 
     
     if len(historico) > 1:
+        # Pega o penúltimo registro
         ultimo_registro = historico[-2]
+        
         try:
             preco_anterior = int(ultimo_registro['preco_moedas'])
         except ValueError:
@@ -234,89 +139,167 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
 
         diferenca = preco_atual_moedas - preco_anterior
         
+        # Formatação da diferença
         diferenca_formatada = f"{abs(diferenca):,}".replace(",", "X").replace(".", ",").replace("X", ".")
         
         if diferenca > 0:
-            return f"⬆️ **{diferenca_formatada} moedas mais caro** que a última busca ({ultimo_registro['data_hora']}). **PODE SER HORA DE VENDER!**"
+            return f"⬆️ **{diferenca_formatada} moedas mais caro** que o registro anterior ({ultimo_registro['data_hora']}). **PODE SER HORA DE VENDER!**"
         elif diferenca < 0:
-            return f"⬇️ **{diferenca_formatada} moedas mais barato** que a última busca ({ultimo_registro['data_hora']}). **PODE SER HORA DE COMPRAR!**"
+            return f"⬇️ **{diferenca_formatada} moedas mais barato** que o registro anterior ({ultimo_registro['data_hora']}). **PODE SER HORA DE COMPRAR!**"
         else:
-            return "➡️ Preço estável desde a última busca."
+            return "➡️ Preço estável desde o registro anterior."
     else:
-        return "Primeiro registro. Busque novamente mais tarde para comparar os preços!"
+        return "Primeiro registro. Registre mais preços para ativar a Dica de Trade!"
 
 
 # ===================================================
-# 3. FUNÇÕES DE DIÁLOGO DO TELEGRAM 
+# 3. HANDLERS DE CONVERSA E FLUXO
 # ===================================================
+
+# Esta função lida com o início do fluxo de registro e com mensagens de texto genéricas.
+async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lida com mensagens de texto do usuário, controlando o estado da conversa."""
+    
+    text = update.message.text.strip()
+    user_data = context.user_data
+    current_state = user_data.get('flow_state', 'READY')
+    
+    # ----------------------------------------------------
+    # ESTADO: ESPERANDO NOME DO JOGADOR
+    # ----------------------------------------------------
+    if current_state == 'WAITING_FOR_PLAYER':
+        
+        player_name = text.title()
+        user_data['temp_player_name'] = player_name
+        user_data['flow_state'] = 'ASKING_FOR_PLATFORM'
+        
+        keyboard = [
+            [InlineKeyboardButton(display_name, callback_data=f'PLATFORM:{key}') for key, display_name in PLATFORMS.items()]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"Jogador: **{player_name}**\n\nEm qual plataforma você viu este preço?",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        return
+
+    # ----------------------------------------------------
+    # ESTADO: ESPERANDO PREÇO
+    # ----------------------------------------------------
+    elif current_state == 'WAITING_FOR_PRICE':
+        try:
+            # Remove pontos e vírgulas (ex: 1.000.000 ou 1,000,000)
+            price = int(text.replace('.', '').replace(',', '')) 
+        except ValueError:
+            await update.message.reply_text("🚨 Preço inválido. Por favor, digite o preço apenas com números (ex: 1500000).")
+            return
+            
+        player_name = user_data.get('temp_player_name')
+        platform = user_data.get('temp_platform')
+
+        if not player_name or not platform:
+            # Safety check
+            await update.message.reply_text("🚨 Erro na sessão. Por favor, comece de novo com /start.")
+            user_data['flow_state'] = 'READY'
+            return
+
+        # 1. Registrar no histórico
+        registrar_historico(player_name, price, platform)
+        
+        # 2. Obter a dica de trade
+        trade_tip = get_trade_tip(player_name, price)
+
+        # 3. Finalizar e limpar o estado
+        user_data['flow_state'] = 'READY'
+        user_data.pop('temp_player_name', None)
+        user_data.pop('temp_platform', None)
+        
+        await update.message.reply_text(
+            f"✅ **Registro Concluído!**\n\n"
+            f"**{player_name}** ({platform}) salvo por **{price:,} moedas**.\n"
+            f"---\n"
+            f"📊 **Dica de Trade:**\n{trade_tip}",
+            parse_mode='Markdown'
+        )
+        return
+
+    # ----------------------------------------------------
+    # ESTADO: PRONTO (Nova mensagem ou Busca de Histórico)
+    # ----------------------------------------------------
+    elif current_state == 'READY':
+        
+        # 1. Tenta buscar um preço já existente (Assumindo que o usuário digitou um nome)
+        player_name_search = text.title()
+        result, error_msg = get_last_registered_price(player_name_search)
+        
+        if result:
+            # Preço encontrado, mostra o histórico
+            trade_tip = get_trade_tip(result["player_name"], result["preco_num"])
+            
+            await update.message.reply_text(
+                f"🔍 **Resultado da Busca de Histórico**\n\n"
+                f"{result['price_message']}\n"
+                f"---\n"
+                f"📊 **Dica de Trade:**\n{trade_tip}",
+                parse_mode='Markdown'
+            )
+            return
+
+        elif "oi" in text.lower() or "olá" in text.lower() or "ola" in text.lower() or "registro" in text.lower():
+            # Se for um cumprimento ou intenção de registrar, inicia o fluxo.
+            user_data['flow_state'] = 'WAITING_FOR_PLAYER'
+            await update.message.reply_text(
+                "👋 Olá! Vamos registrar um preço. **Qual jogador você comprou ou está monitorando?**\n(Ex: Vinicius Jr.)",
+                parse_mode='Markdown'
+            )
+            return
+            
+        else:
+            # Mensagem desconhecida, assume que é para iniciar o registro
+            user_data['flow_state'] = 'WAITING_FOR_PLAYER'
+            await update.message.reply_text(
+                f"Não encontrei um registro para **{player_name_search}**.\n\n"
+                f"Vamos começar um novo registro. **Qual jogador você está monitorando?**",
+                parse_mode='Markdown'
+            )
+            return
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Função executada quando o usuário digita /start."""
-    top_players = get_top_5_players()
-    keyboard = []
+    """Função executada quando o usuário digita /start. Inicia o fluxo."""
+    context.user_data['flow_state'] = 'WAITING_FOR_PLAYER'
     
-    for player in top_players:
-        button = InlineKeyboardButton(player["nome"], callback_data=f'SEARCH:{player["id"]}')
-        keyboard.append([button]) 
-
-    keyboard.append([InlineKeyboardButton("🔎 Buscar por Nome (Digite abaixo)", callback_data='SEARCH_TEXT')])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        'Olá! Qual jogador do EA FC 26 você quer pesquisar? Escolha um popular ou digite o nome:',
-        reply_markup=reply_markup
+        "👋 Bem-vindo ao Monitor de Preços Manual!\n\n"
+        "Vamos registrar um novo preço. **Qual jogador você comprou ou está monitorando?**\n(Ex: Vinicius Jr.)",
+        parse_mode='Markdown'
     )
 
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Função executada quando o usuário clica em qualquer botão inline."""
+    """Função executada quando o usuário clica nos botões de plataforma."""
     query = update.callback_query
     await query.answer()
 
-    action, value = query.data.split(':', 1)
-
-    if action == 'SEARCH':
-        result = get_player_price(value)
-        trade_tip = get_trade_tip(result["player_name"], result["preco_num"])
+    action, platform_key = query.data.split(':', 1)
+    
+    if action == 'PLATFORM' and context.user_data.get('flow_state') == 'ASKING_FOR_PLATFORM':
+        
+        platform_name = PLATFORMS.get(platform_key)
+        context.user_data['temp_platform'] = platform_name
+        context.user_data['flow_state'] = 'WAITING_FOR_PRICE'
+        
+        player_name = context.user_data.get('temp_player_name', 'o jogador')
         
         await query.edit_message_text(
             text=(
-                f"✅ **Busca por Jogador Popular**\n\n"
-                f"{result['price_message']}\n\n"
-                f"🕒 Atualizado às **{result['time_now']} (UTC)**\n"
-                f"🌐 Fonte: **{result['source_site']}**\n"
-                f"---\n"
-                f"📊 **Dica de Trade:**\n{trade_tip}"
+                f"Você escolheu **{platform_name}** para **{player_name}**.\n\n"
+                f"Agora, **qual o preço em moedas** desta carta na plataforma?\n"
+                f"(Ex: 1500000)"
             ),
             parse_mode='Markdown'
         )
-
-    elif action == 'SEARCH_TEXT':
-        await query.edit_message_text(
-            text="Ótimo! Por favor, **digite o nome completo** do jogador que você procura abaixo.",
-            parse_mode='Markdown'
-        )
-
-
-async def handle_player_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Função executada quando o usuário digita um texto que não é um comando."""
-    search_term = update.message.text.strip()
-    
-    result = get_player_price(search_term) 
-
-    trade_tip = get_trade_tip(result["player_name"], result["preco_num"])
-
-    await update.message.reply_text(
-        (
-            f"🔍 **Resultado da sua busca:**\n\n"
-            f"{result['price_message']}\n\n"
-            f"🕒 Atualizado às **{result['time_now']} (UTC)**\n"
-            f"🌐 Fonte: **{result['source_site']}**\n"
-            f"---\n"
-            f"📊 **Dica de Trade:**\n{trade_tip}"
-        ),
-        parse_mode='Markdown'
-    )
 
 
 # ===================================================
@@ -331,21 +314,20 @@ def main() -> None:
         
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Handlers (Ligações entre o Telegram e as nossas funções)
+    # Handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_player_search))
+    # Este handler lida com todas as mensagens de texto que não são comandos
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_flow))
 
     print("🤖 Bot iniciado e ouvindo...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == '__main__':
-    # Garante que as bibliotecas necessárias para o acesso à API estejam instaladas
+    # Garante que as bibliotecas necessárias estejam instaladas
     try:
         __import__('pytz')
-        __import__('requests')
-        __import__('bs4') # Necessário para o scraping
     except ImportError as e:
         print(f"ERRO DE DEPENDÊNCIA: {e}. Por favor, instale: pip install -r requirements.txt --user")
     
