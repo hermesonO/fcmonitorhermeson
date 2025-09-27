@@ -9,7 +9,9 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # ===================================================
 
 # 🚨 CHAVE SECRETA: Seu Token
-TELEGRAM_BOT_TOKEN = "8370599851:AAGYNGyUoEmrMv3ZcKXzAJe1ixuJrwcB-Bg"
+# Depois (Seguro)
+import os # Adicione essa importação se ela ainda não existir
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 # ===================================================
 # 2. FUNÇÕES DE DADOS (SIMULADAS) E HISTÓRICO CSV
