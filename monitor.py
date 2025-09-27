@@ -1,85 +1,32 @@
-{
-  "ok": true,
-  "result": [
-    {
-      "update_id": 534068167,
-      "message": {
-        "message_id": 2,
-        "from": {
-          "id": 430434779,
-          "is_bot": false,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "language_code": "pt-br"
-        },
-        "chat": {
-          "id": 430434779,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "type": "private"
-        },
-        "date": 1758917685,
-        "text": "/start",
-        "entities": [
-          {
-            "offset": 0,
-            "length": 6,
-            "type": "bot_command"
-          }
-        ]
-      }
-    },
-    {
-      "update_id": 534068168,
-      "message": {
-        "message_id": 3,
-        "from": {
-          "id": 430434779,
-          "is_bot": false,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "language_code": "pt-br"
-        },
-        "chat": {
-          "id": 430434779,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "type": "private"
-        },
-        "date": 1758917905,
-        "text": "https://api.telegram.org/botSEU_TOKEN/getUpdates",
-        "entities": [
-          {
-            "offset": 0,
-            "length": 48,
-            "type": "url"
-          }
-        ],
-        "link_preview_options": {
-          "is_disabled": true
-        }
-      }
-    },
-    {
-      "update_id": 534068169,
-      "message": {
-        "message_id": 4,
-        "from": {
-          "id": 430434779,
-          "is_bot": false,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "language_code": "pt-br"
-        },
-        "chat": {
-          "id": 430434779,
-          "first_name": "Hermeson",
-          "username": "hermesono",
-          "type": "private"
-        },
-        "date": 1758917962,
-        "text": "TESTANDO BOT"
-      }
-    }
-  ]
-}
+import requests
+import pandas as pd
+import os
+import time
+
+# Pegando o token e chat_id dos Secrets do GitHub
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+def send_message(text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": text}
+    requests.post(url, data=data)
+
+def monitor_prices():
+    # Lê os preços do CSV
+    df = pd.read_csv("precos.csv")
+
+    for index, row in df.iterrows():
+        jogador = row["jogador"]
+        preco_atual = row["preco_atual"]
+        preco_anterior = row["preco_anterior"]
+
+        if preco_atual > preco_anterior:
+            send_message(f"📈 {jogador} subiu de {preco_anterior} para {preco_atual} coins")
+        elif preco_atual < preco_anterior:
+            send_message(f"📉 {jogador} caiu de {preco_anterior} para {preco_atual} coins")
+        else:
+            print(f"{jogador} não teve alteração")
+
+if __name__ == "__main__":
+    monitor_prices()
