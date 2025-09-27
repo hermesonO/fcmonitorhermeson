@@ -1,20 +1,20 @@
 import time
 import csv
+import os # Necessário para ler o token
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+import random # Novo: Para simular preços diferentes a cada busca
 
 # ===================================================
 # 1. CONFIGURAÇÃO
 # ===================================================
 
-# 🚨 CHAVE SECRETA: Seu Token
-# Depois (Seguro)
-import os # Adicione essa importação se ela ainda não existir
+# O código lê o token da variável de ambiente que você definiu no PythonAnywhere
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 # ===================================================
-# 2. FUNÇÕES DE DADOS (SIMULADAS) E HISTÓRICO CSV
+# 2. FUNÇÕES DE DADOS (AGORA COM PREÇOS ALEATÓRIOS PARA TESTE DE TRADE)
 # ===================================================
 
 def registrar_historico(jogador, preco_moedas, preco_formatado):
@@ -22,13 +22,19 @@ def registrar_historico(jogador, preco_moedas, preco_formatado):
     
     # Se o arquivo não existe, cria-o com o cabeçalho
     try:
-        with open('preços_historico.csv', 'r', encoding='utf-8') as f:
+        with open('fcmonitorhermeson/preços_historico.csv', 'r', encoding='utf-8') as f:
             f.readline()
     except FileNotFoundError:
-        with open('preços_historico.csv', 'w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'preco_formatado'])
-
+        # Tenta criar o arquivo na pasta correta
+        try:
+            with open('preços_historico.csv', 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'preco_formatado'])
+        except Exception as e:
+            # Caso o arquivo não possa ser criado (erro de permissão ou caminho)
+            print(f"Erro ao criar preços_historico.csv: {e}")
+            return
+        
     # Abre o arquivo CSV no modo 'a' (append/adicionar)
     with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
@@ -43,8 +49,10 @@ def registrar_historico(jogador, preco_moedas, preco_formatado):
 
 
 def get_top_5_players():
-    """SIMULA a busca pelos 5 jogadores mais buscados no Futbin/Fut.gg."""
-    # NO FUTURO: Coloque seu código de scraping aqui.
+    """SIMULA a busca pelos 5 jogadores mais buscados. MANTENHA ESTA ESTRUTURA."""
+    # NO FUTURO: Aqui você coloca o código de scraping para extrair os 5 jogadores
+    # mais populares do Futbin/Fut.gg.
+    
     return [
         {"nome": "Kylian Mbappé", "id": "mbappe_id"},
         {"nome": "V. van Dijk", "id": "vvd_id"},
@@ -55,27 +63,35 @@ def get_top_5_players():
 
 
 def get_player_price(search_term):
-    """SIMULA a busca do preço de um jogador e REGISTRA o histórico."""
+    """
+    SIMULA a busca do preço e REGISTRA o histórico. 
+    ESTA É A FUNÇÃO ONDE VOCÊ COLOCARÁ SEU CÓDIGO DE SCRAPING.
+    """
     
-    # Simulação da busca de preço real (AQUI entra seu código de scraping!)
-    time.sleep(1)
-    
-    # ⚠️ VALORES SIMULADOS - Substitua pela busca real do Futbin/Fut.gg
-    preco_num = 1500000 
+    # -----------------------------------------------------------------
+    # ⚠️ PONTO DE COLAR DO SCRAPING REAL ⚠️
+    # 
+    # NO FUTURO, APAGUE AS DUAS LINHAS ABAIXO E COLOQUE SEU CÓDIGO AQUI
+    # Para testes, geramos um preço aleatório para simular a flutuação.
+    time.sleep(1) # Simula o tempo de requisição web
+    preco_num = random.randint(1000000, 2000000) # Preço aleatório (1M a 2M)
+    # 
+    # SEU CÓDIGO DE SCRAPING DEVE PREENCHER A VARIÁVEL 'preco_num'
+    # -----------------------------------------------------------------
     
     # Lógica de formatação de nome:
     if "_id" in search_term:
-        player_name = search_term.replace("_id", "").upper()
+        player_name = search_term.replace("_id", "").title()
     else: 
         player_name = search_term.title()
         
-    # Formatação do preço para exibição (ex: 1.500.000 moedas)
+    # Formatação do preço (ex: 1.500.000 moedas)
     preco_texto = f"{preco_num:,}".replace(",", "X").replace(".", ",").replace("X", ".") + " moedas"
 
     # REGISTRA A BUSCA NO CSV
     registrar_historico(player_name, preco_num, preco_texto)
 
-    # Retorna o nome e o preço numérico e formatado para ser usado na função de dica
+    # Retorna o nome, o preço numérico e o preço formatado
     return {
         "player_name": player_name,
         "preco_num": preco_num,
@@ -111,7 +127,7 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
 
         diferenca = preco_atual_moedas - preco_anterior
         
-        # Formata a diferença
+        # Formata a diferença para a mensagem
         diferenca_formatada = f"{abs(diferenca):,}".replace(",", "X").replace(".", ",").replace("X", ".")
         
         if diferenca > 0:
@@ -194,6 +210,10 @@ async def handle_player_search(update: Update, context: ContextTypes.DEFAULT_TYP
 
 def main() -> None:
     """Conecta o bot ao Telegram e inicia a escuta."""
+    if not TELEGRAM_BOT_TOKEN:
+        print("ERRO CRÍTICO: Token do Telegram não encontrado! Verifique a variável de ambiente.")
+        return
+        
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Handlers (Ligações entre o Telegram e as nossas funções)
