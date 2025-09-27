@@ -1,5 +1,56 @@
 # monitor.py - Bloco A
 
+# monitor.py - (Parte superior, junto com os outros imports)
+
+# ... (outros imports, como from telegram import... )
+import time
+import csv
+from datetime import datetime # Para registrar o horário da busca
+
+# 🚨 Seu TELEGRAM_BOT_TOKEN aqui
+
+# ... (Suas funções get_top_5_players e get_player_price)
+
+# --- NOVA FUNÇÃO DE REGISTRO DE HISTÓRICO ---
+
+def registrar_historico(jogador, preco_moedas, preco_formatado):
+    """Adiciona a busca do jogador ao arquivo CSV."""
+    
+    # 1. Abre o arquivo CSV no modo 'a' (append/adicionar)
+    with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        
+        # 2. Registra a data/hora atual
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 3. Escreve a nova linha de dados no arquivo
+        writer.writerow([now, jogador, preco_moedas, preco_formatado])
+        
+    print(f"Histórico registrado: {jogador} | {preco_formatado}") # Log para você ver no console
+
+
+# --- FUNÇÃO get_player_price (PRECISA SER ATUALIZADA) ---
+
+def get_player_price(search_term):
+    """SIMULA a busca do preço de um jogador e REGISTRA o histórico."""
+    
+    # Simulação da busca (AQUI você colocará seu código de scraping no futuro)
+    time.sleep(1) 
+    
+    # Dados Simulados:
+    preco_num = 1500000 # Valor em números inteiros para o CSV
+    preco_texto = f"{preco_num:,}".replace(",", ".") + " moedas" # Formatado para o usuário (ex: 1.500.000)
+    
+    if "_id" in search_term:
+        player_name = search_term.replace("_id", "").upper()
+    else: 
+        player_name = search_term.title()
+    
+    # ⚠️ CHAMADA DA NOVA FUNÇÃO: REGISTRA A BUSCA NO CSV
+    registrar_historico(player_name, preco_num, preco_texto)
+
+    return f"O preço de **{player_name}** é: **{preco_texto}**."
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import time
@@ -37,6 +88,36 @@ def get_player_price(search_term):
     return f"O preço de **{player_name}** é: **{1500000} moedas**." # Preço fictício
 
 # monitor.py - Bloco B
+
+# monitor.py - (Abaixo da função registrar_historico)
+
+def get_trade_tip(jogador_nome, preco_atual_moedas):
+    """Lê o histórico e fornece uma dica simples de trade."""
+    
+    historico = []
+    # 1. Lê todo o histórico do arquivo CSV
+    with open('preços_historico.csv', 'r', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            if row['jogador'].upper() == jogador_nome.upper():
+                historico.append(row)
+    
+    # 2. Se há histórico:
+    if len(historico) > 1:
+        # Pega o preço mais recente ANTES da busca atual
+        ultimo_registro = historico[-2]
+        preco_anterior = int(ultimo_registro['preco_moedas'])
+        
+        diferenca = preco_atual_moedas - preco_anterior
+        
+        if diferenca > 0:
+            return f"⬆️ **{diferenca:,} moedas mais caro** que a última busca ({ultimo_registro['data_hora']}). **PODE SER HORA DE VENDER!**"
+        elif diferenca < 0:
+            return f"⬇️ **{-diferenca:,} moedas mais barato** que a última busca ({ultimo_registro['data_hora']}). **PODE SER HORA DE COMPRAR!**"
+        else:
+            return "➡️ Preço estável desde a última busca."
+    else:
+        return "Primeiro registro. Busque novamente mais tarde para comparar os preços!"
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Função executada quando o usuário digita /start ou envia a primeira mensagem."""
@@ -97,6 +178,49 @@ async def handle_player_search(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 # monitor.py - Bloco C
+
+# monitor.py - (Dentro das funções button_callback e handle_player_search)
+
+# ... (No final do Bloco B, substitua as funções originais pelas abaixo)
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # ... código de início da função ...
+    
+    if action == 'SEARCH':
+        price_message = get_player_price(value) # Esta função agora registra o CSV
+        
+        # Simulação para obter o preço numérico para a dica
+        # No futuro, você ajustará o 'get_player_price' para retornar o preço numérico.
+        preco_num_simulado = 1500000
+        player_name = value.replace("_id", "").upper()
+
+        # ⚠️ CHAMA A DICA DE TRADE
+        trade_tip = get_trade_tip(player_name, preco_num_simulado)
+        
+        await query.edit_message_text(
+            text=f"✅ **Busca por Jogador Popular**\n\n{price_message}\n\n---\n📊 **Dica de Trade:**\n{trade_tip}",
+            parse_mode='Markdown'
+        )
+
+    # ... (o código elif action == 'SEARCH_TEXT' continua igual) ...
+
+
+async def handle_player_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    search_term = update.message.text.strip()
+    
+    price_message = get_player_price(search_term) # Esta função agora registra o CSV
+
+    # Simulação para obter o preço numérico para a dica
+    preco_num_simulado = 1500000
+    player_name = search_term.title()
+
+    # ⚠️ CHAMA A DICA DE TRADE
+    trade_tip = get_trade_tip(player_name, preco_num_simulado)
+
+    await update.message.reply_text(
+        f"🔍 **Resultado da sua busca:**\n\n{price_message}\n\n---\n📊 **Dica de Trade:**\n{trade_tip}",
+        parse_mode='Markdown'
+    )
 
 def main() -> None:
     """Conecta o bot ao Telegram e inicia a escuta."""
