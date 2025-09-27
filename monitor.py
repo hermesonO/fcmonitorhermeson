@@ -7,7 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from pytz import timezone
 
-# 🚨 NOVAS BIBLIOTECAS PARA SCRAPING 🚨
+# 🚨 BIBLIOTECAS PARA SCRAPING 🚨
 import requests
 from bs4 import BeautifulSoup
 # ------------------------------------
@@ -17,89 +17,69 @@ from bs4 import BeautifulSoup
 # ===================================================
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-
-# Define o fuso horário
 TIMEZONE = timezone('UTC') 
 
-# Cabeçalhos robustos para simular um navegador Chrome (evita bloqueios)
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-}
+# Lista de User-Agents para evitar bloqueio por repetição
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/123.0.0.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+]
+
 
 # ===================================================
 # 2. FUNÇÕES DE DADOS E SCRAPING MULTI-SITE
 # ===================================================
 
-def registrar_historico(jogador, preco_moedas, preco_formatado):
-    """Adiciona a busca do jogador ao arquivo CSV."""
-    
-    # Se o arquivo não existe, cria-o com o cabeçalho
-    try:
-        with open('preços_historico.csv', 'r', encoding='utf-8') as f:
-            f.readline()
-    except FileNotFoundError:
-        try:
-            # Tenta criar o arquivo na pasta correta
-            with open('preços_historico.csv', 'w', newline='', encoding='utf-8') as file:
-                writer = csv.writer(file)
-                writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'preco_formatado'])
-        except Exception as e:
-            print(f"Erro ao criar preços_historico.csv: {e}")
-            return
-        
-    # Abre o arquivo CSV no modo 'a' (append/adicionar)
-    with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        
-        # Registra a data/hora atual
-        now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Escreve a nova linha de dados no arquivo
-        writer.writerow([now, jogador, preco_moedas, preco_formatado])
-        
-    print(f"Histórico registrado: {jogador} | {preco_formatado}")
-
-
 def clean_price_text(price_text):
-    """Limpa o texto do preço, removendo moedas, K, pontos e vírgulas."""
-    # Remove 'K' (para milhares) e trata a formatação brasileira (ponto separador de milhar)
-    cleaned = price_text.lower().replace('k', '').replace('.', '').replace(',', '').strip()
+    """Limpa o texto do preço, removendo K/M e formatação de milhar."""
     
-    # Tenta converter para inteiro. Se for '589', retorna 589000
-    try:
-        num = int(cleaned)
-        # Se o preço for pequeno (ex: 589), e o texto original tinha 'K', adiciona zeros
-        if 'k' in price_text.lower():
-            return num * 1000
-        return num
-    except ValueError:
-        return None # Retorna None se a limpeza falhar
+    # Remove qualquer caracter que não seja número, K, M, ponto ou vírgula
+    price_text = price_text.lower().replace('.', '').replace(',', '').strip()
+
+    if 'm' in price_text:
+        # Preços em Milhões (ex: 1.5M -> 1500000)
+        num = float(price_text.replace('m', '')) * 1000000
+    elif 'k' in price_text:
+        # Preços em Milhares (ex: 500K -> 500000)
+        num = float(price_text.replace('k', '')) * 1000
+    else:
+        # Preços sem notação (assume que já é o número total)
+        num = float(price_text)
+
+    # Arredonda e retorna como inteiro (ex: 1500000)
+    return int(num) if num is not None else None
 
 
 def scrape_futbin(player_name):
-    """Tenta extrair o preço do Futbin."""
+    """
+    Tenta extrair o preço do Futbin usando o recurso de busca e redirecionamento.
+    """
     
-    # O Futbin exige uma URL de busca mais complexa para encontrar o ID.
-    # Para simplificar, vamos tentar uma busca direta (que pode falhar) e procurar o preço.
-    
-    # Formata o nome para a URL (Futbin geralmente prefere o nome na URL)
+    # 1. Tenta acessar a URL de busca
     search_term = player_name.lower().replace(" ", "+")
     url = f"https://www.futbin.com/search?query={search_term}"
     
+    # Escolhe um User-Agent aleatório para cada busca
+    headers = {'User-Agent': random.choice(USER_AGENTS)}
+    
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status() 
-        
+        # Permite redirecionamento (o Futbin redireciona a busca para a página do jogador)
+        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+        response.raise_for_status() # Verifica erros HTTP
+
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # ⚠️ Ponto Crítico do FUTBIN:
-        # Tenta encontrar o preço no resultado da busca ou na página redirecionada.
-        # Busca pela classe onde o preço geralmente é exibido (exemplo baseado em inspeção comum)
+        # O preço PS4/5 geralmente está em 'span' com classes específicas
+        # Tentativa 1: Preço principal no topo da página
         price_element = soup.find('span', class_='ps4_price') 
         
         if not price_element:
-            price_element = soup.find('span', class_='ps4_price_val') # Tentativa secundária
-            
+            # Tentativa 2: Preço principal dentro de uma div
+            price_element = soup.find('div', class_='ps4_price_val') 
+        
         if price_element:
             price_text = price_element.get_text(strip=True)
             final_price = clean_price_text(price_text)
@@ -107,70 +87,60 @@ def scrape_futbin(player_name):
             if final_price is not None:
                 return final_price, "FUTBIN (Real)"
             else:
+                print(f"Futbin Erro: Formato de preço inválido: {price_text}")
                 return None, "FUTBIN (Formato Inválido)"
 
+        # Se não encontrou o elemento, pode ser uma página de múltiplos resultados
+        print("Futbin Erro: Elemento de preço não encontrado. Talvez seja página de busca.")
         return None, "FUTBIN (Elemento Não Encontrado)"
 
     except requests.exceptions.RequestException as e:
-        print(f"Futbin Erro: {e}")
+        print(f"Futbin Erro de Conexão: {e}")
         return None, "FUTBIN (Erro de Conexão)"
-
-
-def scrape_futwiz(player_name):
-    """Tenta extrair o preço do Futwiz (Secundário)."""
-    
-    search_slug = player_name.lower().replace(" ", "-").replace(".", "").replace("'", "")
-    # A URL do Futwiz precisa do ID, então vamos usar uma URL de busca que pode falhar
-    url = f"https://www.futwiz.com/en/fifa24/search/price/{search_slug}"
-
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # ⚠️ Ponto Crítico do FUTWIZ (Classe do Preço):
-        price_element = soup.find('div', class_='pc-price')
-        
-        if price_element:
-            price_text = price_element.get_text(strip=True)
-            final_price = clean_price_text(price_text)
-            
-            if final_price is not None:
-                return final_price, "FUTWIZ (Real)"
-            else:
-                return None, "FUTWIZ (Formato Inválido)"
-
-        return None, "FUTWIZ (Elemento Não Encontrado)"
-
-    except requests.exceptions.RequestException as e:
-        print(f"Futwiz Erro: {e}")
-        return None, "FUTWIZ (Erro de Conexão)"
 
 
 def fetch_price_from_web(player_name):
     """
-    Coordena as tentativas de scraping.
+    Coordena a tentativa de scraping principal no Futbin.
     """
     
-    # 1. TENTA FUTBIN (Prioridade)
+    # Tenta o scraping
     price, source = scrape_futbin(player_name)
-    if price is not None:
-        return price, source
-
-    # 2. TENTA FUTWIZ (Fallback)
-    price, source = scrape_futwiz(player_name)
+    
     if price is not None:
         return price, source
         
-    # 3. FALLBACK FINAL (Simulação Aleatória)
+    # FALLBACK FINAL (Simulação Aleatória)
     time.sleep(1) 
     preco_num_simulado = random.randint(1000000, 2000000)
     
-    # Se todas as fontes falharam, a última fonte será a que falhou por último
-    # (ou a mais prioritária que identificou o erro)
-    # Aqui, a última fonte que tentamos foi o FUTWIZ:
-    return preco_num_simulado, "ERRO: Todos os sites falharam (Simulado)"
+    return preco_num_simulado, "ERRO: Busca Real Falhou (Simulado)"
+
+
+def registrar_historico(jogador, preco_moedas, preco_formatado):
+    """Adiciona a busca do jogador ao arquivo CSV."""
+    
+    # ... (código da função registrar_historico permanece o mesmo) ...
+    try:
+        with open('preços_historico.csv', 'r', encoding='utf-8') as f:
+            f.readline()
+    except FileNotFoundError:
+        try:
+            with open('preços_historico.csv', 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'preco_formatado'])
+        except Exception as e:
+            print(f"Erro ao criar preços_historico.csv: {e}")
+            return
+        
+    with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        
+        now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+        
+        writer.writerow([now, jogador, preco_moedas, preco_formatado])
+        
+    print(f"Histórico registrado: {jogador} | {preco_formatado}")
 
 
 def get_top_5_players():
@@ -189,25 +159,20 @@ def get_player_price(search_term):
     Função principal que chama o scraping real.
     """
     
-    # Lógica de formatação de nome:
     if "_id" in search_term:
         player_name = search_term.replace("_id", "").title()
     else: 
         player_name = search_term.title()
     
-    # 🚨 CHAMADA DO SCRAPING REAL ENCAREADO 🚨
+    # 🚨 CHAMADA DO SCRAPING REAL 🚨
     preco_num, source_site = fetch_price_from_web(player_name)
     
-    # Captura o horário AGORA
     current_time_str = datetime.now(TIMEZONE).strftime('%H:%M:%S')
         
-    # Formatação do preço (ex: 1.500.000 moedas)
     preco_texto = f"{preco_num:,}".replace(",", "X").replace(".", ",").replace("X", ".") + " moedas"
 
-    # REGISTRA A BUSCA NO CSV
     registrar_historico(player_name, preco_num, preco_texto)
 
-    # Retorna todos os dados necessários
     return {
         "player_name": player_name,
         "preco_num": preco_num,
@@ -254,7 +219,7 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
 
 
 # ===================================================
-# 3. FUNÇÕES DE DIÁLOGO DO TELEGRAM
+# 3. FUNÇÕES DE DIÁLOGO DO TELEGRAM 
 # ===================================================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
