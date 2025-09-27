@@ -1,32 +1,24 @@
-import requests
-import pandas as pd
-import os
-import time
+name: Rodar script
 
-# Pegando o token e chat_id dos Secrets do GitHub
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+on:
+  workflow_dispatch: # permite rodar manualmente
+  schedule:
+    - cron: "0 * * * *" # roda a cada 1 hora
 
-def send_message(text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": text}
-    requests.post(url, data=data)
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-def monitor_prices():
-    # Lê os preços do CSV
-    df = pd.read_csv("precos.csv")
+    steps:
+    - uses: actions/checkout@v3
 
-    for index, row in df.iterrows():
-        jogador = row["jogador"]
-        preco_atual = row["preco_atual"]
-        preco_anterior = row["preco_anterior"]
+    - name: Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-        if preco_atual > preco_anterior:
-            send_message(f"📈 {jogador} subiu de {preco_anterior} para {preco_atual} coins")
-        elif preco_atual < preco_anterior:
-            send_message(f"📉 {jogador} caiu de {preco_anterior} para {preco_atual} coins")
-        else:
-            print(f"{jogador} não teve alteração")
+    - name: Instalar dependências
+      run: pip install -r requirements.txt
 
-if __name__ == "__main__":
-    monitor_prices()
+    - name: Rodar script
+      run: python monitor.py
