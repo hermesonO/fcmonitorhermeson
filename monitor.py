@@ -9,8 +9,6 @@ from pytz import timezone
 
 # 🚨 BIBLIOTECAS PARA ACESSO À WEB (API-BASED) 🚨
 import requests
-# BeautifulSoup não é mais necessário para a API, mas mantemos por segurança.
-from bs4 import BeautifulSoup 
 # ------------------------------------
 
 # ===================================================
@@ -20,7 +18,11 @@ from bs4 import BeautifulSoup
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TIMEZONE = timezone('UTC') 
 
-# Lista de User-Agents (ainda útil, mas menos crítica para APIs)
+# 🚨 CHAVE DE ACESSO DO FUTBIN (Definida no PythonAnywhere)
+# O valor 'FUT_WEB' é um valor conhecido que simula a requisição de um navegador.
+FUTBIN_API_KEY = os.environ.get("FUTBIN_API_KEY") 
+
+# Lista de User-Agents para rotação
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
@@ -28,30 +30,41 @@ USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
 ]
 
-# URL da API de busca do Futbin (para encontrar o ID do jogador)
+# URLs da API do Futbin
 FUTBIN_SEARCH_API = "https://www.futbin.com/search_players"
-# URL da API de preço do Futbin (o ID será inserido aqui)
 FUTBIN_PRICE_API = "https://www.futbin.com/mobile/player_prices?player_id=" 
 
 # ===================================================
 # 2. FUNÇÕES DE DADOS E ACESSO À API DO FUTBIN
 # ===================================================
 
+def get_headers():
+    """Gera o cabeçalho de requisição com User-Agent rotativo e a API Key."""
+    
+    headers = {
+        'User-Agent': random.choice(USER_AGENTS),
+        # Este cabeçalho é essencial para simular uma requisição AJAX
+        'X-Requested-With': FUTBIN_API_KEY 
+    }
+    # Adiciona referer para simular que a requisição veio do próprio site
+    if 'FUT_WEB' in FUTBIN_API_KEY:
+         headers['Referer'] = 'https://www.futbin.com/'
+         
+    return headers
+
+
 def get_player_id(player_name):
     """Usa a API de busca do Futbin para encontrar o ID do jogador."""
     
-    headers = {'User-Agent': random.choice(USER_AGENTS)}
+    headers = get_headers()
     
     try:
-        # A API de busca exige o termo de pesquisa no parâmetro 'term'
         response = requests.get(FUTBIN_SEARCH_API, headers=headers, params={'term': player_name}, timeout=10)
         response.raise_for_status()
         
-        # O retorno é um JSON com uma lista de jogadores correspondentes
         results = response.json()
         
         if results and len(results) > 0:
-            # Pega o ID do primeiro e melhor resultado
             return results[0].get('id')
             
         return None
@@ -61,30 +74,39 @@ def get_player_id(player_name):
         return None
 
 def get_price_from_api(player_id):
-    """Usa a API de preço do Futbin com o ID para obter o preço em JSON."""
+    """Usa a API de preço do Futbin com o ID para obter os preços em JSON (PS e XBOX)."""
     
-    headers = {'User-Agent': random.choice(USER_AGENTS)}
+    headers = get_headers()
     url = FUTBIN_PRICE_API + str(player_id)
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        # O retorno é um JSON com os preços por plataforma (PS, XBOX, PC)
         prices_data = response.json()
-        
-        # O Futbin retorna um dicionário com o ID do jogador como chave principal
         player_data = prices_data.get(str(player_id))
         
         if player_data:
-            # Pegamos o preço da plataforma PS (PlayStation) como padrão
-            price_info = player_data.get('prices', {}).get('ps')
+            price_info = player_data.get('prices', {})
             
-            if price_info and 'LCPrice' in price_info:
-                # O preço está formatado como string, ex: '1,500,000'
-                price_text = price_info['LCPrice'].replace(',', '') # Remove vírgulas
-                return int(price_text), "FUTBIN (API - PS)"
+            # --- EXTRAÇÃO DO PREÇO DO PS ---
+            ps_price_text = price_info.get('ps', {}).get('LCPrice', '')
+            # Remove vírgulas e tenta converter
+            ps_price = int(ps_price_text.replace(',', '')) if ps_price_text.replace(',', '').isdigit() else None
+            
+            # --- EXTRAÇÃO DO PREÇO DO XBOX ---
+            xbox_price_text = price_info.get('xbox', {}).get('LCPrice', '')
+            xbox_price = int(xbox_price_text.replace(',', '')) if xbox_price_text.replace(',', '').isdigit() else None
+            
+            # Retorna um dicionário com os preços e a fonte
+            if ps_price or xbox_price:
+                return {
+                    "ps_price": ps_price,
+                    "xbox_price": xbox_price,
+                    "source": "FUTBIN (API - PS/XBOX)"
+                }
                 
+        # Se encontrou o ID, mas não encontrou o preço
         return None, "FUTBIN (API - Preço não encontrado)"
 
     except requests.exceptions.RequestException as e:
@@ -94,31 +116,40 @@ def get_price_from_api(player_id):
 
 def fetch_price_from_web(player_name):
     """
-    Coordena a busca do preço usando a API do Futbin.
+    Coordena a busca do preço usando a API do Futbin e retorna os preços das plataformas.
     """
     
+    # Verifica se a chave foi definida (para evitar erros de Simulado)
+    if not FUTBIN_API_KEY:
+        return {
+            "ps_price": random.randint(1000000, 2000000), 
+            "xbox_price": random.randint(1000000, 2000000), 
+            "source": "ERRO: Chave FUTBIN_API_KEY não definida (Simulado)"
+        }
+        
     # 1. Busca o ID do jogador
     player_id = get_player_id(player_name)
     
     if player_id:
         # 2. Se o ID foi encontrado, busca o preço
-        price, source = get_price_from_api(player_id)
+        result = get_price_from_api(player_id)
         
-        if price is not None:
-            return price, source
+        if isinstance(result, dict):
+            return result
 
     # FALLBACK FINAL (Simulação Aleatória)
     time.sleep(1) 
-    preco_num_simulado = random.randint(1000000, 2000000)
     
-    # A fonte indicará que o processo de busca do ID falhou
-    return preco_num_simulado, "ERRO: Falha na API do Futbin (Simulado)"
+    return {
+        "ps_price": random.randint(1000000, 2000000), 
+        "xbox_price": random.randint(1000000, 2000000), 
+        "source": "ERRO: Falha na API do Futbin (Simulado)"
+    }
 
 
 def registrar_historico(jogador, preco_moedas, preco_formatado):
     """Adiciona a busca do jogador ao arquivo CSV."""
     
-    # ... (código da função registrar_historico permanece o mesmo) ...
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as f:
             f.readline()
@@ -143,7 +174,6 @@ def registrar_historico(jogador, preco_moedas, preco_formatado):
 
 def get_top_5_players():
     """SIMULA a busca pelos 5 jogadores mais buscados."""
-    # Para ser 100% real, esta função também teria que usar a API do Futbin
     return [
         {"nome": "Kylian Mbappé", "id": "mbappe_id"},
         {"nome": "V. van Dijk", "id": "vvd_id"},
@@ -155,7 +185,7 @@ def get_top_5_players():
 
 def get_player_price(search_term):
     """
-    Função principal que chama a API do Futbin.
+    Função principal que prepara a mensagem final.
     """
     
     if "_id" in search_term:
@@ -164,20 +194,40 @@ def get_player_price(search_term):
         player_name = search_term.title()
     
     # 🚨 CHAMADA DA API REAL 🚨
-    preco_num, source_site = fetch_price_from_web(player_name)
+    price_data = fetch_price_from_web(player_name)
     
     current_time_str = datetime.now(TIMEZONE).strftime('%H:%M:%S')
-        
-    preco_texto = f"{preco_num:,}".replace(",", "X").replace(".", ",").replace("X", ".") + " moedas"
+    
+    # --- PREPARAÇÃO DA MENSAGEM FINAL ---
+    
+    # Usamos o preço do PS para o histórico e a dica de trade
+    preco_num_ps = price_data.get("ps_price", 0) 
+    
+    # Formatação dos preços para exibição
+    
+    def format_price(price):
+        if price:
+            # Formatação de milhares (1.000.000)
+            return f"{price:,}".replace(",", "X").replace(".", ",").replace("X", ".") + " moedas"
+        return "N/D"
 
-    registrar_historico(player_name, preco_num, preco_texto)
+    preco_ps_texto = format_price(price_data.get("ps_price"))
+    preco_xbox_texto = format_price(price_data.get("xbox_price"))
+    
+    price_message = (
+        f"O preço de **{player_name}** é:\n"
+        f"🔹 **PlayStation:** {preco_ps_texto}\n"
+        f"🟢 **Xbox:** {preco_xbox_texto}"
+    )
+
+    registrar_historico(player_name, preco_num_ps, preco_ps_texto)
 
     return {
         "player_name": player_name,
-        "preco_num": preco_num,
-        "price_message": f"O preço de **{player_name}** é: **{preco_texto}**.",
+        "preco_num": preco_num_ps, # Mantém apenas o PS para a dica de trade
+        "price_message": price_message,
         "time_now": current_time_str,
-        "source_site": source_site
+        "source_site": price_data.get("source")
     }
 
 
