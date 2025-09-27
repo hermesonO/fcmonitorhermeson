@@ -1,4 +1,0 @@
-- name: Instalar dependências
-        run: | # O 'run: |' permite rodar múltiplas linhas
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
