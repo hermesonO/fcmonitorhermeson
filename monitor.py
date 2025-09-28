@@ -9,6 +9,8 @@ from pytz import timezone
 # 1. CONFIGURAÇÃO E DADOS VISUAIS
 # ===================================================
 
+# ATENÇÃO: O token deve ser definido como variável de ambiente no seu console PythonAnywhere!
+# Ex: export TELEGRAM_BOT_TOKEN='SEU_TOKEN_AQUI'
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TIMEZONE = timezone('UTC') 
 
@@ -19,10 +21,6 @@ PLATFORMS = {
     'PC': 'PC 💻'
 }
 
-# Novo Estado:
-# 'WAITING_FOR_SEARCH_NAME': O bot espera o nome do jogador apenas para BUSCA.
-# ------------------------------------------------------------------------------------------------------
-
 # ===================================================
 # 2. FUNÇÕES DE FORMATAÇÃO E DADOS
 # ===================================================
@@ -31,12 +29,12 @@ def format_price(price):
     """Formata o número de moedas (ex: 1.000.000) e adiciona o ícone."""
     if price is None:
         return "N/D"
+    # Lógica de formatação para separador de milhares e decimais (se aplicável)
     price_str = f"{price:,}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{price_str} 🪙"
 
-def registrar_historico(jogador, preco_moedas, plataforma):
-    """Adiciona o registro de preço manual ao arquivo CSV."""
-    # (Lógica omitida por ser a mesma, apenas para não lotar o código aqui)
+def init_csv():
+    """Garante que o arquivo CSV de histórico exista com os cabeçalhos corretos."""
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as f:
             f.readline()
@@ -47,8 +45,13 @@ def registrar_historico(jogador, preco_moedas, plataforma):
                 writer.writerow(['data_hora', 'jogador', 'preco_moedas', 'plataforma'])
         except Exception as e:
             print(f"Erro ao criar preços_historico.csv: {e}")
-            return
+
+def registrar_historico(jogador, preco_moedas, plataforma):
+    """Adiciona o registro de preço manual ao arquivo CSV."""
+    
+    init_csv()
         
+    # Adiciona a nova linha
     with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
@@ -58,8 +61,6 @@ def registrar_historico(jogador, preco_moedas, plataforma):
             preco_limpo = 0
             
         writer.writerow([now, jogador, preco_limpo, plataforma])
-        
-    print(f"Histórico registrado: {jogador} ({plataforma}) | {preco_limpo}")
 
 
 def get_last_registered_price(player_name):
@@ -86,7 +87,7 @@ def get_last_registered_price(player_name):
              return None, f"Erro de formato nos dados para {player_name}."
 
         price_message = (
-            f"📚 Último Registro de **{player_name}**:\n"
+            f"✅ **Último Registro de {player_name}**\n"
             f"💰 **Preço:** {format_price(preco_moedas)}\n"
             f"🎮 **Plataforma:** {last_entry['plataforma']}\n"
             f"📅 **Atualizado em:** {dt_obj.strftime('%d/%m/%Y')} às {dt_obj.strftime('%H:%M:%S')} (UTC)"
@@ -118,6 +119,7 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
 
     
     if len(historico) > 1:
+        # Pega o penúltimo registro para comparação
         ultimo_registro = historico[-2]
         
         try:
@@ -126,7 +128,6 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
              return "Erro ao ler preço anterior."
 
         diferenca = preco_atual_moedas - preco_anterior
-        
         diferenca_formatada = format_price(abs(diferenca))
         
         if diferenca > 0:
@@ -199,6 +200,7 @@ def get_recent_history(limit=5):
     except FileNotFoundError:
         return []
     
+    # Inverte para mostrar do mais novo para o mais antigo
     return history[::-1]
 
 
@@ -304,7 +306,7 @@ async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text(
                 f"🚨 Não encontrei registros para **{player_name_search}**.\n\n"
-                f"Use /start para voltar ao menu ou **digite outro nome** para pesquisar novamente.",
+                f"Use /start para voltar ao menu ou clique em **Pesquisar Jogador** novamente.",
                 parse_mode='Markdown'
             )
             return
@@ -313,8 +315,10 @@ async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ESTADO: PRONTO (QUALQUER OUTRO TEXTO)
     # ----------------------------------------------------
     elif current_state == 'READY':
-        # Qualquer texto em estado 'READY' que não é comando volta ao menu principal
-        await start_command(update, context)
+        # Permite que 'oi' ou 'menu' abra o menu
+        if text.lower() in ['oi', 'olá', 'menu']:
+             await start_command(update, context)
+        return
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -325,10 +329,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         [InlineKeyboardButton("🔎 Pesquisar Jogador", callback_data='MENU:PESQUISAR')],
         [InlineKeyboardButton("📚 Histórico Completo", callback_data='MENU:HISTORICO')],
         [InlineKeyboardButton("⏱ Últimos 5 Registros", callback_data='MENU:RECENTES')],
-        [InlineKeyboardButton("💾 Exportar Dados (CSV)", callback_data='MENU:EXPORTAR')], # 🚨 NOVO BOTÃO
+        [InlineKeyboardButton("💾 Exportar Dados (CSV)", callback_data='MENU:EXPORTAR')], 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Decide se é uma resposta de mensagem (ex: /start) ou de query (ex: 'oi')
     message_source = update.callback_query.message if update.callback_query else update.message
 
     # Sempre limpa o estado ao voltar ao menu principal
@@ -341,20 +346,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode='Markdown'
     )
 
-async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """NOVA FUNÇÃO: Envia o arquivo CSV do histórico."""
+async def export_command(message_source: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Envia o arquivo CSV do histórico."""
     try:
         if os.path.exists('preços_historico.csv'):
             with open('preços_historico.csv', 'rb') as doc:
-                await update.message.reply_document(
+                await message_source.reply_document(
                     document=doc,
                     caption="💾 **Seu Histórico de Preços (CSV):**\n\nPronto para análise em Excel ou Sheets!",
                     parse_mode='Markdown'
                 )
         else:
-            await update.message.reply_text("🚨 Arquivo de histórico não encontrado.")
+            await message_source.reply_text("🚨 Arquivo de histórico não encontrado. Registre um preço primeiro!")
     except Exception as e:
-        await update.message.reply_text(f"🚨 Erro ao exportar: {e}")
+        await message_source.reply_text(f"🚨 Erro ao exportar: {e}")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -373,7 +378,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         
         elif value == 'PESQUISAR':
-            # 🚨 MUDANÇA DE ESTADO: Agora espera o nome para busca 🚨
             context.user_data['flow_state'] = 'WAITING_FOR_SEARCH_NAME'
             await query.edit_message_text(
                 "🔎 Por favor, **digite o nome completo** do jogador que você procura abaixo.",
@@ -437,7 +441,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mostra todos os jogadores que já foram registrados."""
-    # (Lógica omitida por ser a mesma)
+    
     message_source = update.callback_query.message if update.callback_query else update.message
     
     registered_players = get_all_registered_players()
@@ -474,7 +478,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def recent_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mostra os últimos 5 registros de preço."""
-    # (Lógica omitida por ser a mesma)
+    
     recent_entries = get_recent_history(limit=5)
     
     if not recent_entries:
@@ -514,11 +518,12 @@ def main() -> None:
         
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Handlers (Adicionado o novo comando /exportar)
+    # Handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("historico", history_command))
     application.add_handler(CommandHandler("exportar", export_command))
     application.add_handler(CallbackQueryHandler(button_callback))
+    # Mensagens de texto (que não são comandos) vão para o fluxo de conversa
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_flow))
 
     print("🤖 Bot iniciado e ouvindo...")
@@ -531,4 +536,6 @@ if __name__ == '__main__':
     except ImportError as e:
         print(f"ERRO DE DEPENDÊNCIA: {e}. Por favor, instale: pip install -r requirements.txt --user")
     
+    # Garante que o arquivo de histórico exista ao iniciar
+    init_csv() 
     main()
