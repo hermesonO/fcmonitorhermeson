@@ -19,18 +19,12 @@ PLATFORMS = {
     'PC': 'PC 💻'
 }
 
-# 🚨 BIBLIOTECA DE IMAGENS (PREENCHA AQUI!) 🚨
-# Lembre-se de atualizar com URLs reais ou o bot não enviará a foto.
-PLAYER_IMAGES = {
-    'Vini Jr': 'https://s2.glbimg.com/X4yK67yB9-J-zW3B8Qn8P9xW2zE=/0x0:1080x1080/984x0/smart/filters:strip_icc()/i.s3.glbimg.com/v1/AUTH_bc082239f21f42d8817f91c96af0b40e/internal_photos/bs/2023/z/f/Wk46X9Q3W6Z4xJ0zMhFw/230915-vjr-ea-fc-24.jpg',
-    'L. Messi': 'https://futdb.net/cards/image/21/254.png',
-    'Kylian Mbappé': 'https://futdb.net/cards/image/21/237.png',
-    # ADICIONE MAIS JOGADORES AQUI!
-}
-# ---------------------------------------------------
+# Novo Estado:
+# 'WAITING_FOR_SEARCH_NAME': O bot espera o nome do jogador apenas para BUSCA.
+# ------------------------------------------------------------------------------------------------------
 
 # ===================================================
-# 2. FUNÇÕES DE DADOS E HISTÓRICO
+# 2. FUNÇÕES DE FORMATAÇÃO E DADOS
 # ===================================================
 
 def format_price(price):
@@ -42,8 +36,7 @@ def format_price(price):
 
 def registrar_historico(jogador, preco_moedas, plataforma):
     """Adiciona o registro de preço manual ao arquivo CSV."""
-    
-    # 1. Cria o arquivo se não existir
+    # (Lógica omitida por ser a mesma, apenas para não lotar o código aqui)
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as f:
             f.readline()
@@ -56,7 +49,6 @@ def registrar_historico(jogador, preco_moedas, plataforma):
             print(f"Erro ao criar preços_historico.csv: {e}")
             return
         
-    # 2. Adiciona a nova linha
     with open('preços_historico.csv', 'a', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
@@ -104,15 +96,13 @@ def get_last_registered_price(player_name):
             "player_name": player_name,
             "preco_num": preco_moedas,
             "price_message": price_message,
-            "last_update": dt_obj.strftime('%Y-%m-%d %H:%M:%S'),
-            "plataforma": last_entry['plataforma']
         }, None
         
     return None, f"Nenhum preço registrado para **{player_name}**."
 
 
 def get_trade_tip(jogador_nome, preco_atual_moedas):
-    """Lê o histórico e fornece uma dica simples de trade, usando o preço registrado."""
+    """Gera o 'gráfico simples' (Dica de Trade com emojis)."""
     
     historico = []
     player_name_upper = jogador_nome.upper()
@@ -133,7 +123,7 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
         try:
             preco_anterior = int(ultimo_registro['preco_moedas'])
         except ValueError:
-             return "Erro ao ler preço anterior. Verifique o formato do CSV."
+             return "Erro ao ler preço anterior."
 
         diferenca = preco_atual_moedas - preco_anterior
         
@@ -147,6 +137,43 @@ def get_trade_tip(jogador_nome, preco_atual_moedas):
             return "➡️ Preço estável desde o registro anterior."
     else:
         return "Primeiro registro. Registre mais preços para ativar a Dica de Trade!"
+
+
+def get_detailed_player_history(player_name, limit=3):
+    """BUSCA DETALHADA: Retorna os últimos N registros de preço para um jogador específico."""
+    historico = []
+    player_name_upper = player_name.upper()
+    
+    try:
+        with open('preços_historico.csv', 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if row['jogador'].upper() == player_name_upper:
+                    historico.append(row)
+    except FileNotFoundError:
+        return "Histórico não encontrado."
+
+    if len(historico) <= 1:
+        return "Nenhum registro anterior para comparação."
+        
+    # Pega os últimos 'limit' registros e inverte para o mais recente ficar no topo
+    recent_entries = historico[-limit:][::-1]
+    
+    detailed_history = []
+    for entry in recent_entries:
+        try:
+            dt_obj = datetime.strptime(entry['data_hora'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=TIMEZONE)
+            preco_moedas = int(entry.get('preco_moedas', 0))
+        except ValueError:
+            continue
+            
+        entry_line = (
+            f"   • **{format_price(preco_moedas)}** ({entry['plataforma'].replace(' ', ' ')})\n"
+            f"     Em: *{dt_obj.strftime('%d/%m %H:%M')}*"
+        )
+        detailed_history.append(entry_line)
+        
+    return "\n".join(detailed_history)
 
 
 def get_all_registered_players():
@@ -163,22 +190,20 @@ def get_all_registered_players():
     return sorted(list(players))
 
 def get_recent_history(limit=5):
-    """NOVA FUNÇÃO: Retorna os últimos N registros do CSV."""
+    """Retorna os últimos N registros do CSV."""
     history = []
     try:
         with open('preços_historico.csv', 'r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
-            # Lê todas as linhas e inverte para pegar as últimas
             history = list(reader)[-limit:]
     except FileNotFoundError:
         return []
     
-    # Inverte a ordem para mostrar do mais novo para o mais antigo
     return history[::-1]
 
 
 # ===================================================
-# 3. HANDLERS DE CONVERSA E FLUXO
+# 3. HANDLERS E FLUXO DE CONVERSA
 # ===================================================
 
 async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -189,7 +214,7 @@ async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     current_state = user_data.get('flow_state', 'READY')
     
     # ----------------------------------------------------
-    # ESTADO: ESPERANDO NOME DO JOGADOR
+    # ESTADO: ESPERANDO NOME DO JOGADOR (REGISTRO)
     # ----------------------------------------------------
     if current_state == 'WAITING_FOR_PLAYER':
         
@@ -234,64 +259,62 @@ async def handle_message_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_data.pop('temp_player_name', None)
         user_data.pop('temp_platform', None)
         
-        photo_url = PLAYER_IMAGES.get(player_name, None)
-
-        caption_text = (
+        response_text = (
             f"✅ **Registro Concluído!**\n\n"
             f"**{player_name}** ({platform}) salvo por **{format_price(price)}**.\n"
             f"---\n"
             f"📈 **Dica de Trade:**\n{trade_tip}"
         )
         
-        if photo_url:
-            await update.message.reply_photo(
-                photo=photo_url,
-                caption=caption_text,
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text(
-                caption_text,
-                parse_mode='Markdown'
-            )
+        await update.message.reply_text(
+            response_text,
+            parse_mode='Markdown'
+        )
         return
 
     # ----------------------------------------------------
-    # ESTADO: PRONTO (Busca de Histórico ou Início de Registro)
+    # ESTADO: ESPERANDO NOME DO JOGADOR (BUSCA)
     # ----------------------------------------------------
-    elif current_state == 'READY':
+    elif current_state == 'WAITING_FOR_SEARCH_NAME':
         
         player_name_search = text.title()
+        user_data['flow_state'] = 'READY' # Retorna para o estado normal após a busca
+        
         result, error_msg = get_last_registered_price(player_name_search)
         
         if result:
-            # Preço encontrado: executa a busca e mostra o resultado
             trade_tip = get_trade_tip(result["player_name"], result["preco_num"])
-            photo_url = PLAYER_IMAGES.get(result["player_name"], None)
-            
-            caption_text = (
+            detailed_history = get_detailed_player_history(result["player_name"], limit=3)
+
+            response_text = (
                 f"{result['price_message']}\n"
                 f"---\n"
-                f"📈 **Dica de Trade:**\n{trade_tip}"
+                f"📈 **Dica de Trade:**\n{trade_tip}\n"
+                f"---\n"
+                f"📚 **Últimos Registros (3):**\n"
+                f"{detailed_history}"
             )
             
-            if photo_url:
-                await update.message.reply_photo(
-                    photo=photo_url,
-                    caption=caption_text,
-                    parse_mode='Markdown'
-                )
-            else:
-                await update.message.reply_text(
-                    caption_text,
-                    parse_mode='Markdown'
-                )
+            await update.message.reply_text(
+                response_text,
+                parse_mode='Markdown'
+            )
             return
 
-        # Se não encontrou um registro e não é um comando conhecido (ex: 'oi')
         else:
-            # Assume que o usuário quer iniciar o fluxo
-            await start_command(update, context)
+            await update.message.reply_text(
+                f"🚨 Não encontrei registros para **{player_name_search}**.\n\n"
+                f"Use /start para voltar ao menu ou **digite outro nome** para pesquisar novamente.",
+                parse_mode='Markdown'
+            )
+            return
+            
+    # ----------------------------------------------------
+    # ESTADO: PRONTO (QUALQUER OUTRO TEXTO)
+    # ----------------------------------------------------
+    elif current_state == 'READY':
+        # Qualquer texto em estado 'READY' que não é comando volta ao menu principal
+        await start_command(update, context)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,15 +325,37 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         [InlineKeyboardButton("🔎 Pesquisar Jogador", callback_data='MENU:PESQUISAR')],
         [InlineKeyboardButton("📚 Histórico Completo", callback_data='MENU:HISTORICO')],
         [InlineKeyboardButton("⏱ Últimos 5 Registros", callback_data='MENU:RECENTES')],
+        [InlineKeyboardButton("💾 Exportar Dados (CSV)", callback_data='MENU:EXPORTAR')], # 🚨 NOVO BOTÃO
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message_source = update.callback_query.message if update.callback_query else update.message
 
-    await update.message.reply_text(
+    # Sempre limpa o estado ao voltar ao menu principal
+    context.user_data['flow_state'] = 'READY' 
+
+    await message_source.reply_text(
         "👋 **Menu Principal - Monitor de Preços**\n\n"
         "Selecione uma opção abaixo:",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
+
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """NOVA FUNÇÃO: Envia o arquivo CSV do histórico."""
+    try:
+        if os.path.exists('preços_historico.csv'):
+            with open('preços_historico.csv', 'rb') as doc:
+                await update.message.reply_document(
+                    document=doc,
+                    caption="💾 **Seu Histórico de Preços (CSV):**\n\nPronto para análise em Excel ou Sheets!",
+                    parse_mode='Markdown'
+                )
+        else:
+            await update.message.reply_text("🚨 Arquivo de histórico não encontrado.")
+    except Exception as e:
+        await update.message.reply_text(f"🚨 Erro ao exportar: {e}")
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lida com todos os botões inline (Plataforma, Menu, Histórico)."""
@@ -319,11 +364,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     action, value = query.data.split(':', 1)
     
-    # ----------------------------------------------------
-    # AÇÕES DO MENU PRINCIPAL
-    # ----------------------------------------------------
     if action == 'MENU':
-        
         if value == 'REGISTRAR':
             context.user_data['flow_state'] = 'WAITING_FOR_PLAYER'
             await query.edit_message_text(
@@ -332,21 +373,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         
         elif value == 'PESQUISAR':
-            context.user_data['flow_state'] = 'READY' # Garante que o estado está pronto para a busca de texto
+            # 🚨 MUDANÇA DE ESTADO: Agora espera o nome para busca 🚨
+            context.user_data['flow_state'] = 'WAITING_FOR_SEARCH_NAME'
             await query.edit_message_text(
                 "🔎 Por favor, **digite o nome completo** do jogador que você procura abaixo.",
                 parse_mode='Markdown'
             )
             
         elif value == 'HISTORICO':
-            await history_command(query, context) # Chama a função de histórico
+            await history_command(query, context)
             
         elif value == 'RECENTES':
-            await recent_history_command(query, context) # Chama a nova função de recentes
+            await recent_history_command(query, context)
+            
+        elif value == 'EXPORTAR':
+            # Executa o comando de exportar e remove o menu de botões
+            await export_command(query.message, context)
+            await query.delete_message()
 
-    # ----------------------------------------------------
-    # AÇÃO DE SELEÇÃO DE PLATAFORMA (Durante o Registro)
-    # ----------------------------------------------------
+
     elif action == 'PLATFORM' and context.user_data.get('flow_state') == 'ASKING_FOR_PLATFORM':
         
         platform_name = PLATFORMS.get(value)
@@ -364,46 +409,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode='Markdown'
         )
         
-    # ----------------------------------------------------
-    # AÇÃO DE BUSCA DE HISTÓRICO (Pelos botões)
-    # ----------------------------------------------------
     elif action == 'SEARCH_HISTORY':
         player_name = value
         result, error_msg = get_last_registered_price(player_name)
         
         if result:
             trade_tip = get_trade_tip(result["player_name"], result["preco_num"])
+            detailed_history = get_detailed_player_history(result["player_name"], limit=3)
             
             caption_text = (
                 f"🔍 **Histórico de {player_name}**\n\n"
                 f"{result['price_message']}\n"
                 f"---\n"
-                f"📈 **Dica de Trade:**\n{trade_tip}"
+                f"📈 **Dica de Trade:**\n{trade_tip}\n"
+                f"---\n"
+                f"📚 **Últimos Registros (3):**\n"
+                f"{detailed_history}"
             )
             
-            photo_url = PLAYER_IMAGES.get(player_name, None)
-
-            if photo_url:
-                await query.message.reply_photo(
-                    photo=photo_url,
-                    caption=caption_text,
-                    parse_mode='Markdown'
-                )
-                await query.delete_message()
-            else:
-                await query.edit_message_text(
-                    caption_text,
-                    parse_mode='Markdown'
-                )
+            await query.edit_message_text(
+                caption_text,
+                parse_mode='Markdown'
+            )
         else:
             await query.edit_message_text(f"🚨 Erro ao buscar histórico: {error_msg}")
 
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mostra todos os jogadores que já foram registrados."""
-    # Nota: Esta função é chamada pelo /historico (Update) ou pelo botão (Query).
-    
-    message_source = update.callback_query if update.callback_query else update.message
+    # (Lógica omitida por ser a mesma)
+    message_source = update.callback_query.message if update.callback_query else update.message
     
     registered_players = get_all_registered_players()
     
@@ -423,7 +458,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Decide se edita a mensagem (veio de um botão) ou responde (veio de /historico)
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "📚 **Histórico Completo de Jogadores:**\nClique para ver o último preço registrado:",
@@ -439,9 +473,8 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def recent_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """NOVA FUNÇÃO: Mostra os últimos 5 registros de preço."""
-    # Nota: Esta função só será chamada pelo botão (Update.callback_query)
-    
+    """Mostra os últimos 5 registros de preço."""
+    # (Lógica omitida por ser a mesma)
     recent_entries = get_recent_history(limit=5)
     
     if not recent_entries:
@@ -455,7 +488,7 @@ async def recent_history_command(update: Update, context: ContextTypes.DEFAULT_T
             dt_obj = datetime.strptime(entry['data_hora'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=TIMEZONE)
             preco_moedas = int(entry.get('preco_moedas', 0))
         except ValueError:
-            continue # Pula entradas mal formatadas
+            continue
 
         message_parts.append(
             f"🔸 **{entry['jogador']}** ({entry['plataforma']})\n"
@@ -481,12 +514,11 @@ def main() -> None:
         
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Handlers
+    # Handlers (Adicionado o novo comando /exportar)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("historico", history_command))
+    application.add_handler(CommandHandler("exportar", export_command))
     application.add_handler(CallbackQueryHandler(button_callback))
-    # Qualquer texto que não seja comando agora é tratado como fluxo, 
-    # e se estiver "READY" (fora de registro), tenta a busca de histórico.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message_flow))
 
     print("🤖 Bot iniciado e ouvindo...")
